@@ -88,5 +88,166 @@ Sock Shop 애플리케이션은 여러 마이크로서비스로 구성되어 있
 
 이러한 제안은 Sock Shop 마이크로서비스 아키텍처의 전반적인 성능, 확장성 및 복원력을 향상시킬 것입니다.
 
+아래는 제안된 해결 방안을 위한 일부 YAML 파일 예시입니다. 이 YAML 파일들은 주요 개선 사항인 **Circuit Breaker**, **Auto-scaling**, **Database Replication** 및 **Service Mesh**를 반영합니다.
+
+### 1. **Circuit Breaker** (Istio 적용)
+Circuit Breaker는 Istio와 같은 **Service Mesh**를 통해 구현할 수 있습니다. Istio VirtualService에서 설정할 수 있는 Circuit Breaker 예시입니다.
+
+#### `catalogue-virtual-service.yaml` (Istio VirtualService)
+```yaml
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: catalogue
+spec:
+  hosts:
+  - catalogue
+  http:
+  - route:
+    - destination:
+        host: catalogue
+    retries:
+      attempts: 3
+      perTryTimeout: 2s
+      retryOn: 5xx
+    fault:
+      delay:
+        percentage:
+          value: 5
+        fixedDelay: 3s
+      abort:
+        percentage:
+          value: 10
+        httpStatus: 500
+```
+
+이 설정은 `catalogue` 서비스에서 **3회 재시도**하고, 응답 지연이 발생할 경우 **3초 딜레이**를 주는 구조입니다. 또한, 일정 비율의 오류 응답을 시뮬레이션할 수 있습니다.
+
+---
+
+### 2. **Auto-scaling** (Horizontal Pod Autoscaler)
+서비스를 자동으로 확장하기 위한 Kubernetes Horizontal Pod Autoscaler (HPA) 설정 파일입니다.
+
+#### `catalogue-hpa.yaml`
+```yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: catalogue
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: catalogue
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 50
+```
+
+이 HPA는 `catalogue` 서비스가 CPU 사용률이 50%를 초과할 경우 자동으로 인스턴스를 추가하여 최대 10개까지 확장하도록 설정합니다.
+
+---
+
+### 3. **Database Replication**
+데이터베이스의 고가용성을 위한 **replication** 설정을 추가할 수 있습니다. 예를 들어, MongoDB를 사용하는 경우 복제 세트를 설정할 수 있습니다.
+
+#### `user-db-statefulset.yaml` (MongoDB Replication)
+```yaml
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: user-db
+spec:
+  serviceName: "user-db"
+  replicas: 3
+  selector:
+    matchLabels:
+      app: user-db
+  template:
+    metadata:
+      labels:
+        app: user-db
+    spec:
+      containers:
+      - name: mongodb
+        image: mongo:4.4
+        ports:
+        - containerPort: 27017
+        command:
+        - mongod
+        - "--replSet"
+        - rs0
+  volumeClaimTemplates:
+  - metadata:
+      name: mongo-data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 1Gi
+```
+
+이 설정은 `user-db`를 MongoDB 복제 세트로 실행하는 `StatefulSet`입니다. 이를 통해 **고가용성**과 **데이터 복제**를 보장할 수 있습니다.
+
+---
+
+### 4. **Event-Driven Architecture** (Kafka 배포 예시)
+RabbitMQ 대신 **Kafka**와 같은 이벤트 스트리밍 플랫폼을 사용하여 서비스 간의 의존성을 낮출 수 있습니다.
+
+#### `kafka-deployment.yaml`
+```yaml
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: kafka
+spec:
+  serviceName: "kafka"
+  replicas: 3
+  selector:
+    matchLabels:
+      app: kafka
+  template:
+    metadata:
+      labels:
+        app: kafka
+    spec:
+      containers:
+      - name: kafka
+        image: wurstmeister/kafka:2.13-2.6.0
+        ports:
+        - containerPort: 9092
+        env:
+        - name: KAFKA_BROKER_ID
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: KAFKA_ZOOKEEPER_CONNECT
+          value: zookeeper:2181
+        - name: KAFKA_ADVERTISED_LISTENERS
+          value: PLAINTEXT://kafka:9092
+  volumeClaimTemplates:
+  - metadata:
+      name: kafka-data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 5Gi
+```
+
+이 배포 파일은 Kafka 클러스터의 노드를 3개 복제하는 StatefulSet으로 설정되어 있으며, 각 노드는 Zookeeper와 통신하여 메시징을 관리합니다.
+
+---
+
+이러한 YAML 파일들은 Sock Shop 애플리케이션의 문제를 해결하기 위해 제안된 주요 아키텍처 변경 사항들을 반영한 것입니다.
+
+
+
 ===============================================================================================================
  
